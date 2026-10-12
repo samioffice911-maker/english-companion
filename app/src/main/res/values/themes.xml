@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#0F1720</color>
+    <color name="card">#1A2532</color>
+    <color name="accent">#2BB673</color>
+    <color name="accent_stop">#E5534B</color>
+    <color name="text">#E8EEF3</color>
+    <color name="muted">#93A1AF</color>
+    <color name="user_bubble">#24364A</color>
+    <color name="ai_bubble">#173B2C</color>
+
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:textColor">@color/text</item>
+    </style>
+</resources>
