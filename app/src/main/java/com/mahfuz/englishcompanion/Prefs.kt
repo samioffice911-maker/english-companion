@@ -40,6 +40,11 @@ class Prefs(context: Context) {
         get() = p.getInt("pause_ms", 1300)
         set(v) = p.edit().putInt("pause_ms", v).apply()
 
+    /** Extra switch: focus on workplace / formal English in any mode. */
+    var professional: Boolean
+        get() = p.getBoolean("professional", false)
+        set(v) = p.edit().putBoolean("professional", v).apply()
+
     var saveHistory: Boolean
         get() = p.getBoolean("save_history", false)
         set(v) = p.edit().putBoolean("save_history", v).apply()
@@ -159,15 +164,11 @@ object Modes {
     const val COMPANION = "companion"
     const val TEACHER = "teacher"
     const val CONVERSATION = "conversation"
-    const val BRIDGE = "bangla_bridge"
-    const val PROFESSIONAL = "professional"
 
-    val ALL = listOf(COMPANION, TEACHER, CONVERSATION, BRIDGE, PROFESSIONAL)
+    val ALL = listOf(COMPANION, TEACHER, CONVERSATION)
     val LABELS = listOf(
-        "Companion — quiet, only helps when needed",
-        "Teacher — more corrections + explanations",
-        "Conversation — chats with you",
-        "Bangla Bridge — turns Bangla into English",
-        "Professional — workplace English"
+        "Companion — quiet, helps only when needed",
+        "Teacher — more corrections + short explanations",
+        "Conversation — chats with you, asks questions"
     )
 }

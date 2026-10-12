@@ -3,7 +3,7 @@ package com.mahfuz.englishcompanion
 /** Builds the instructions that tell the AI how to behave. */
 object Prompt {
 
-    fun build(mode: String, memory: String, history: String, paused: Boolean): String {
+    fun build(mode: String, professional: Boolean, memory: String, history: String, paused: Boolean): String {
         val modeRules = when (mode) {
             Modes.TEACHER -> """
 MODE: TEACHER.
@@ -18,17 +18,6 @@ MODE: CONVERSATION.
 - Do NOT act like a grammar teacher. If there was a clear mistake, slip the correct form naturally into your reply (recasting), e.g. user: "Yesterday I go market" -> "Oh, you went to the market yesterday? What did you buy?"
 - Bangla or mixed speech: first say the natural English version ("In English: ..."), then continue the chat.
 """.trim()
-            Modes.BRIDGE -> """
-MODE: BANGLA BRIDGE.
-- Main job: whenever the user speaks Bangla or mixed Bangla-English, speak the natural English version so the user can repeat it. Format: just the English sentence, optionally "Or: <more natural alternative>".
-- For English speech: stay silent unless the mistake makes the meaning unclear.
-""".trim()
-            Modes.PROFESSIONAL -> """
-MODE: PROFESSIONAL.
-- Help the user sound clear and professional, as in meetings, presentations, emails and technical discussion.
-- Speak when a sentence is incorrect OR too casual for work; give the polished professional version (e.g. "More professional: ...").
-- Bangla or mixed speech: give a professional English version.
-""".trim()
             else -> """
 MODE: COMPANION (minimal interruption).
 - The user is going about their day, talking to themselves in English. Mostly LISTEN SILENTLY (speak=false).
@@ -39,6 +28,13 @@ MODE: COMPANION (minimal interruption).
 - Ignore small slips. Never praise correct sentences in this mode.
 """.trim()
         }
+
+        val proRule = if (professional) """
+PROFESSIONAL ENGLISH IS ON: the user wants workplace English (meetings, presentations, emails, technical discussion).
+- Besides real mistakes, also treat sentences that are too casual or unclear for work as worth improving.
+- Give polished, professional versions (e.g. "More professional: ..."), but still natural, not stiff.
+- Bangla or mixed speech: give a professional English version.
+""".trim() else ""
 
         val pausedRule = if (paused) """
 THE COMPANION IS CURRENTLY PAUSED: set speak=false for everything, unless the user says "continue", "resume" or "start again" (then command="continue", speak=true, reply="Okay, I'm back.").
@@ -55,6 +51,8 @@ YOUR STEPS FOR EACH CLIP:
 5. Watch especially for common Bangla-speaker issues: verb tense, missing/extra articles (a/an/the), prepositions, subject-verb agreement, word order, literal translations, he/she mix-ups.
 
 $modeRules
+
+$proRule
 
 VOICE COMMANDS (the user may say these in English or Bangla):
 - "Pause"/"stop listening" -> command="pause", speak=true, reply="Okay, pausing. Say continue when you're ready."

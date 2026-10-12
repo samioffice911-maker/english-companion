@@ -15,9 +15,8 @@ Every change pushed to `main` builds a new APK automatically (see the **Actions*
 ## Modes
 - **Companion** – quiet; speaks only for Bangla, important mistakes, or when you talk to it
 - **Teacher** – corrects more and explains briefly
-- **Conversation** – chats with you
-- **Bangla Bridge** – turns your Bangla into English
-- **Professional** – workplace English
+- **Conversation** – chats with you and asks questions
+- **💼 Professional English switch** – works with any mode; focuses on workplace English
 
 ## Voice commands
 "Pause", "Continue", "Say it again", "Slower", "Faster", "Explain that", "Give me another way", "Let's practice", "Stop companion".

@@ -60,7 +60,7 @@ object Engine {
         worker.execute {
             Bus.status("Thinking…")
             try {
-                val prompt = Prompt.build(prefs.mode, prefs.memorySummary(), historyText(), paused)
+                val prompt = Prompt.build(prefs.mode, prefs.professional, prefs.memorySummary(), historyText(), paused)
                 val r = call(key, prefs.model, prompt)
                 handle(r, seconds, typed)
             } catch (e: ApiException) {

@@ -18,6 +18,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 
@@ -44,6 +45,10 @@ class MainActivity : Activity() {
         }
 
         setupModeSpinner()
+
+        val pro = findViewById<Switch>(R.id.switchPro)
+        pro.isChecked = Engine.prefs.professional
+        pro.setOnCheckedChangeListener { _, on -> Engine.prefs.professional = on }
 
         startBtn.setOnClickListener {
             if (Bus.running) stopCompanion() else startCompanion()

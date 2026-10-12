@@ -49,6 +49,15 @@
         android:paddingStart="8dp"
         android:paddingEnd="8dp" />
 
+    <Switch
+        android:id="@+id/switchPro"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="💼  Professional English (work, meetings, emails)"
+        android:textColor="@color/text"
+        android:textSize="15sp" />
+
     <Button
         android:id="@+id/btnStart"
         android:layout_width="match_parent"
