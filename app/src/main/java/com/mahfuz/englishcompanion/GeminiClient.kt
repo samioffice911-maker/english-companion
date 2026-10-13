@@ -45,7 +45,18 @@ class GeminiClient {
         return call(apiKey, model, systemPrompt, parts)
     }
 
+    /** Try once more if the network or Google's server hiccups. */
     private fun call(apiKey: String, model: String, systemPrompt: String, parts: JSONArray): AiResult {
+        return try {
+            callOnce(apiKey, model, systemPrompt, parts)
+        } catch (e: java.net.SocketTimeoutException) {
+            callOnce(apiKey, model, systemPrompt, parts)
+        } catch (e: ApiException) {
+            if (e.code >= 500) callOnce(apiKey, model, systemPrompt, parts) else throw e
+        }
+    }
+
+    private fun callOnce(apiKey: String, model: String, systemPrompt: String, parts: JSONArray): AiResult {
         val body = JSONObject()
             .put("systemInstruction", JSONObject().put("parts",
                 JSONArray().put(JSONObject().put("text", systemPrompt))))
@@ -59,8 +70,8 @@ class GeminiClient {
         val conn = url.openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
-            conn.connectTimeout = 15000
-            conn.readTimeout = 45000
+            conn.connectTimeout = 10000
+            conn.readTimeout = 20000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("x-goog-api-key", apiKey)

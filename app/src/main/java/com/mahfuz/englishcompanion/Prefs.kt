@@ -5,10 +5,32 @@ import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-/** All saved settings, mistake memory and progress numbers. Stored only on the phone. */
+data class Word(val word: String, val meaning: String, val example: String, val time: Long)
+
+data class Stats(
+    val seconds: Float = 0f,
+    val words: Int = 0,
+    val english: Int = 0,
+    val bangla: Int = 0,
+    val mixed: Int = 0,
+    val corrections: Int = 0,
+    val newWords: Int = 0,
+    val turns: Int = 0,
+) {
+    val totalLang get() = english + bangla + mixed
+    val englishPct get() = if (totalLang == 0) 0 else (english * 100 + mixed * 50) / totalLang
+    val banglaPct get() = if (totalLang == 0) 0 else 100 - englishPct
+    operator fun plus(o: Stats) = Stats(
+        seconds + o.seconds, words + o.words, english + o.english, bangla + o.bangla,
+        mixed + o.mixed, corrections + o.corrections, newWords + o.newWords, turns + o.turns
+    )
+}
+
+/** All saved settings, mistake memory, vocabulary and progress. Stored only on the phone. */
 class Prefs(context: Context) {
     private val p: SharedPreferences =
         context.getSharedPreferences("companion", Context.MODE_PRIVATE)
@@ -22,28 +44,35 @@ class Prefs(context: Context) {
         get() = p.getString("model", DEFAULT_MODEL)?.ifBlank { DEFAULT_MODEL } ?: DEFAULT_MODEL
         set(v) = p.edit().putString("model", v.trim()).apply()
 
+    var userName: String
+        get() = p.getString("user_name", "") ?: ""
+        set(v) = p.edit().putString("user_name", v.trim()).apply()
+
+    var dailyGoalMin: Int
+        get() = p.getInt("daily_goal", 15)
+        set(v) = p.edit().putInt("daily_goal", v.coerceIn(5, 120)).apply()
+
     var mode: String
-        get() = p.getString("mode", Modes.COMPANION) ?: Modes.COMPANION
+        get() = p.getString("mode", Modes.COMPANION)?.takeIf { it in Modes.ALL } ?: Modes.COMPANION
         set(v) = p.edit().putString("mode", v).apply()
+
+    var professional: Boolean
+        get() = p.getBoolean("professional", false)
+        set(v) = p.edit().putBoolean("professional", v).apply()
 
     var speechRate: Float
         get() = p.getFloat("speech_rate", 0.95f)
         set(v) = p.edit().putFloat("speech_rate", v.coerceIn(0.5f, 1.6f)).apply()
 
-    /** 0 = low (needs louder voice), 1 = medium, 2 = high (picks up quiet voice) */
+    /** 0 = low (noisy places), 1 = medium, 2 = high (quiet voice) */
     var sensitivity: Int
         get() = p.getInt("sensitivity", 1)
-        set(v) = p.edit().putInt("sensitivity", v).apply()
+        set(v) = p.edit().putInt("sensitivity", v.coerceIn(0, 2)).apply()
 
-    /** How long you must be silent before the app treats your sentence as finished. */
+    /** Silence (ms) after which a sentence counts as finished. */
     var pauseMs: Int
-        get() = p.getInt("pause_ms", 1300)
-        set(v) = p.edit().putInt("pause_ms", v).apply()
-
-    /** Extra switch: focus on workplace / formal English in any mode. */
-    var professional: Boolean
-        get() = p.getBoolean("professional", false)
-        set(v) = p.edit().putBoolean("professional", v).apply()
+        get() = p.getInt("pause_ms2", 900)
+        set(v) = p.edit().putInt("pause_ms2", v).apply()
 
     var saveHistory: Boolean
         get() = p.getBoolean("save_history", false)
@@ -58,21 +87,18 @@ class Prefs(context: Context) {
         if (!useMemory) return
         val t = type.trim().lowercase(Locale.US)
         if (t.isEmpty() || t == "none") return
-        val counts = JSONObject(p.getString("mistake_counts", "{}") ?: "{}")
+        val counts = obj("mistake_counts")
         counts.put(t, counts.optInt(t, 0) + 1)
-        val notes = JSONArray(p.getString("mistake_notes", "[]") ?: "[]")
+        val notes = arr("mistake_notes")
         if (note.isNotBlank()) notes.put(note.trim())
-        val trimmed = JSONArray()
-        val start = maxOf(0, notes.length() - 30)
-        for (i in start until notes.length()) trimmed.put(notes.getString(i))
         p.edit()
             .putString("mistake_counts", counts.toString())
-            .putString("mistake_notes", trimmed.toString())
+            .putString("mistake_notes", lastN(notes, 30).toString())
             .apply()
     }
 
     fun mistakeCounts(): List<Pair<String, Int>> {
-        val counts = JSONObject(p.getString("mistake_counts", "{}") ?: "{}")
+        val counts = obj("mistake_counts")
         val list = ArrayList<Pair<String, Int>>()
         val keys = counts.keys()
         while (keys.hasNext()) {
@@ -83,10 +109,9 @@ class Prefs(context: Context) {
     }
 
     fun recentMistakeNotes(n: Int): List<String> {
-        val notes = JSONArray(p.getString("mistake_notes", "[]") ?: "[]")
+        val notes = arr("mistake_notes")
         val out = ArrayList<String>()
-        val start = maxOf(0, notes.length() - n)
-        for (i in start until notes.length()) out.add(notes.getString(i))
+        for (i in maxOf(0, notes.length() - n) until notes.length()) out.add(notes.getString(i))
         return out
     }
 
@@ -98,61 +123,127 @@ class Prefs(context: Context) {
         sb.append("Mistake types this user makes most (type: count): ")
         sb.append(top.joinToString(", ") { "${it.first}: ${it.second}" })
         val notes = recentMistakeNotes(6)
-        if (notes.isNotEmpty()) {
-            sb.append("\nRecent mistakes: ")
-            sb.append(notes.joinToString(" | "))
-        }
+        if (notes.isNotEmpty()) sb.append("\nRecent mistakes: ").append(notes.joinToString(" | "))
+        val words = vocabulary().take(8).map { it.word }
+        if (words.isNotEmpty()) sb.append("\nWords already taught (don't repeat; reuse naturally): ")
+            .append(words.joinToString(", "))
         return sb.toString()
     }
 
-    // ---------- Progress ----------
-    fun addTurn(language: String, words: Int, seconds: Float, corrected: Boolean, newWord: Boolean) {
-        val e = p.edit()
-        e.putInt("turns", p.getInt("turns", 0) + 1)
-        e.putInt("words", p.getInt("words", 0) + words)
-        e.putFloat("seconds", p.getFloat("seconds", 0f) + seconds)
-        when (language) {
-            "english" -> e.putInt("lang_en", p.getInt("lang_en", 0) + 1)
-            "bangla" -> e.putInt("lang_bn", p.getInt("lang_bn", 0) + 1)
-            "mixed" -> e.putInt("lang_mix", p.getInt("lang_mix", 0) + 1)
+    // ---------- Vocabulary ----------
+    fun addWord(raw: String) {
+        val parts = raw.split("|").map { it.trim() }
+        val word = parts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return
+        val list = arr("vocab")
+        for (i in 0 until list.length()) {
+            if (list.getJSONObject(i).optString("w").equals(word, true)) return
         }
-        if (corrected) e.putInt("corrections", p.getInt("corrections", 0) + 1)
-        if (newWord) e.putInt("new_words", p.getInt("new_words", 0) + 1)
-
-        // Daily streak
-        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        val last = p.getString("last_day", "") ?: ""
-        if (last != today) {
-            val yesterday = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                .format(Date(System.currentTimeMillis() - 24L * 3600 * 1000))
-            val streak = if (last == yesterday) p.getInt("streak", 0) + 1 else 1
-            e.putInt("streak", streak)
-            e.putString("last_day", today)
-        }
-        e.apply()
+        list.put(JSONObject()
+            .put("w", word)
+            .put("m", parts.getOrNull(1) ?: "")
+            .put("e", parts.getOrNull(2) ?: "")
+            .put("t", System.currentTimeMillis()))
+        p.edit().putString("vocab", lastN(list, 300).toString()).apply()
     }
 
-    fun statsText(): String {
-        val en = p.getInt("lang_en", 0)
-        val bn = p.getInt("lang_bn", 0)
-        val mix = p.getInt("lang_mix", 0)
-        val total = en + bn + mix
-        val enPct = if (total == 0) 0 else (en * 100 / total)
-        val mins = (p.getFloat("seconds", 0f) / 60f)
-        return String.format(
-            Locale.US,
-            "🔥 %d-day streak · %.0f min spoken · %d words · %d%% English · %d corrections · %d new words",
-            p.getInt("streak", 0), mins, p.getInt("words", 0), enPct,
-            p.getInt("corrections", 0), p.getInt("new_words", 0)
+    /** Newest first */
+    fun vocabulary(): List<Word> {
+        val list = arr("vocab")
+        val out = ArrayList<Word>()
+        for (i in list.length() - 1 downTo 0) {
+            val o = list.getJSONObject(i)
+            out.add(Word(o.optString("w"), o.optString("m"), o.optString("e"), o.optLong("t")))
+        }
+        return out
+    }
+
+    fun deleteWord(word: String) {
+        val list = arr("vocab")
+        val out = JSONArray()
+        for (i in 0 until list.length()) {
+            val o = list.getJSONObject(i)
+            if (!o.optString("w").equals(word, true)) out.put(o)
+        }
+        p.edit().putString("vocab", out.toString()).apply()
+    }
+
+    // ---------- Progress (kept per day) ----------
+    fun addTurn(language: String, words: Int, seconds: Float, corrected: Boolean, newWord: Boolean) {
+        val days = obj("days")
+        val key = dayKey(0)
+        val d = days.optJSONObject(key) ?: JSONObject()
+        d.put("s", d.optDouble("s", 0.0) + seconds)
+        d.put("w", d.optInt("w", 0) + words)
+        d.put("t", d.optInt("t", 0) + 1)
+        when (language) {
+            "english" -> d.put("en", d.optInt("en", 0) + 1)
+            "bangla" -> d.put("bn", d.optInt("bn", 0) + 1)
+            "mixed" -> d.put("mx", d.optInt("mx", 0) + 1)
+        }
+        if (corrected) d.put("c", d.optInt("c", 0) + 1)
+        if (newWord) d.put("v", d.optInt("v", 0) + 1)
+        days.put(key, d)
+        p.edit().putString("days", days.toString()).apply()
+    }
+
+    /** Totals for the last [n] days (1 = today only). n <= 0 means all time. */
+    fun stats(n: Int): Stats {
+        val days = obj("days")
+        var total = Stats()
+        if (n <= 0) {
+            val keys = days.keys()
+            while (keys.hasNext()) total += parse(days.optJSONObject(keys.next()))
+        } else {
+            for (i in 0 until n) total += parse(days.optJSONObject(dayKey(i)))
+        }
+        return total
+    }
+
+    /** Speaking minutes for each of the last [n] days, oldest first. */
+    fun dailyMinutes(n: Int): List<Float> {
+        val days = obj("days")
+        return (n - 1 downTo 0).map { i ->
+            ((days.optJSONObject(dayKey(i))?.optDouble("s", 0.0) ?: 0.0) / 60.0).toFloat()
+        }
+    }
+
+    fun streak(): Int {
+        val days = obj("days")
+        var i = if (days.has(dayKey(0))) 0 else 1   // today not started yet doesn't break it
+        var count = 0
+        while (days.has(dayKey(i))) { count++; i++ }
+        return count
+    }
+
+    private fun parse(d: JSONObject?): Stats {
+        if (d == null) return Stats()
+        return Stats(
+            d.optDouble("s", 0.0).toFloat(), d.optInt("w", 0), d.optInt("en", 0),
+            d.optInt("bn", 0), d.optInt("mx", 0), d.optInt("c", 0), d.optInt("v", 0), d.optInt("t", 0)
         )
     }
 
+    private fun dayKey(daysAgo: Int): String {
+        val c = Calendar.getInstance()
+        c.add(Calendar.DAY_OF_YEAR, -daysAgo)
+        return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(c.timeInMillis))
+    }
+
     fun clearAllData() {
-        val savedKey = apiKey
-        val savedModel = model
+        val keep = mapOf("api_key" to apiKey, "model" to model, "user_name" to userName)
         p.edit().clear().commit()
-        apiKey = savedKey   // keep the key so the app still works
-        model = savedModel
+        val e = p.edit()
+        keep.forEach { (k, v) -> e.putString(k, v) }
+        e.apply()
+    }
+
+    // ---------- helpers ----------
+    private fun obj(key: String) = try { JSONObject(p.getString(key, "{}") ?: "{}") } catch (e: Exception) { JSONObject() }
+    private fun arr(key: String) = try { JSONArray(p.getString(key, "[]") ?: "[]") } catch (e: Exception) { JSONArray() }
+    private fun lastN(a: JSONArray, n: Int): JSONArray {
+        val out = JSONArray()
+        for (i in maxOf(0, a.length() - n) until a.length()) out.put(a.get(i))
+        return out
     }
 
     companion object {
@@ -166,9 +257,12 @@ object Modes {
     const val CONVERSATION = "conversation"
 
     val ALL = listOf(COMPANION, TEACHER, CONVERSATION)
-    val LABELS = listOf(
-        "Companion — quiet, helps only when needed",
-        "Teacher — more corrections + short explanations",
-        "Conversation — chats with you, asks questions"
+    val TITLES = listOf("Companion Mode", "Teacher Mode", "Conversation Mode")
+    val SUBTITLES = listOf(
+        "Minimal interruption",
+        "More corrections & explanations",
+        "Actively chats with you"
     )
+
+    fun title(mode: String) = TITLES[ALL.indexOf(mode).coerceAtLeast(0)]
 }

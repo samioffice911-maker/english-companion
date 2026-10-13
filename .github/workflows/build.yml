@@ -32,8 +32,8 @@ jobs:
       - name: Publish to Releases (download on your phone)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.${{ github.run_number }}
-          name: English Companion v0.1.${{ github.run_number }}
+          tag_name: v0.2.${{ github.run_number }}
+          name: English Companion v0.2.${{ github.run_number }}
           body: |
             Download **EnglishCompanion.apk** below and open it on your Android phone.
             Built from commit ${{ github.sha }}.

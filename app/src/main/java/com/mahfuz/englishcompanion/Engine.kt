@@ -41,9 +41,12 @@ object Engine {
     }
 
     fun submitText(text: String) {
-        Bus.post(Kind.USER, text)
+        Bus.post(Kind.USER, text, "Typed")
         submit(0f, typed = true) { key, model, prompt -> client.analyzeText(key, model, prompt, text) }
     }
+
+    private fun idleStatus() =
+        if (Bus.isRunning) (if (paused) "Paused — say \"continue\"" else "Listening…") else "Ready"
 
     private fun submit(
         seconds: Float,
@@ -52,17 +55,19 @@ object Engine {
     ) {
         val key = prefs.apiKey
         if (key.isBlank()) {
-            Bus.post(Kind.ERROR, "No API key yet. Tap ⚙ Settings and paste your Gemini API key.")
+            Bus.post(Kind.ERROR, "No API key yet. Open Settings (⚙ on Home) and paste your Gemini API key.")
             speaker.speak("Please add your Gemini API key in settings first.")
             return
         }
         busyCount.incrementAndGet()
+        if (!typed) Bus.status(String.format(java.util.Locale.US, "Understanding %.1fs of speech…", seconds))
         worker.execute {
-            Bus.status("Thinking…")
+            val t0 = System.currentTimeMillis()
+            if (typed) Bus.status("Thinking…")
             try {
                 val prompt = Prompt.build(prefs.mode, prefs.professional, prefs.memorySummary(), historyText(), paused)
                 val r = call(key, prefs.model, prompt)
-                handle(r, seconds, typed)
+                handle(r, seconds, typed, (System.currentTimeMillis() - t0) / 1000f)
             } catch (e: ApiException) {
                 val msg = when (e.code) {
                     429 -> "Free limit reached for now. Wait a minute (or try again tomorrow if it keeps happening)."
@@ -76,34 +81,48 @@ object Engine {
             } catch (e: java.net.UnknownHostException) {
                 Bus.post(Kind.ERROR, "No internet connection.")
             } catch (e: java.net.SocketTimeoutException) {
-                Bus.post(Kind.ERROR, "The AI took too long to answer. Try again.")
+                Bus.post(Kind.ERROR, "The AI took too long to answer (slow internet?). Try again.")
             } catch (e: Exception) {
                 Bus.post(Kind.ERROR, "Error: ${e.message}")
             } finally {
                 busyCount.decrementAndGet()
-                Bus.status(if (Bus.running) (if (paused) "Paused — say \"continue\"" else "Listening…") else "Ready")
+                Bus.status(idleStatus())
             }
         }
     }
 
-    private fun handle(r: AiResult, seconds: Float, typed: Boolean) {
-        if (r.language == "noise" || (r.transcript.isBlank() && !typed)) return
+    private fun handle(r: AiResult, seconds: Float, typed: Boolean, took: Float) {
+        if (r.language == "noise") return
+        if (r.language == "unclear" || (r.transcript.isBlank() && !typed)) {
+            if (seconds >= 1.2f) Bus.post(Kind.INFO, "🤔 Couldn't hear that clearly — try again a bit closer to the mic.")
+            return
+        }
 
-        if (!typed) Bus.post(Kind.USER, r.transcript)
+        if (!typed) {
+            val tag = when (r.language) {
+                "bangla" -> "Bangla detected"
+                "mixed" -> "Bangla + English"
+                else -> "English"
+            }
+            Bus.post(Kind.USER, r.transcript, tag, took)
+        }
 
         val hasCorrection = r.corrected.isNotBlank() &&
             normalize(r.corrected) != normalize(r.transcript)
         if (hasCorrection) {
-            val label = if (r.language == "english") "✔ Better" else "🇬🇧 In English"
-            Bus.post(Kind.CORRECTION, "$label: ${r.corrected}" +
-                if (r.mistakeNote.isNotBlank()) "\n   (${r.mistakeNote})" else "")
+            val label = if (r.language == "english") "More natural way" else "In English"
+            Bus.post(Kind.CORRECTION, r.corrected, if (r.mistakeNote.isNotBlank()) "$label · ${r.mistakeNote}" else label)
         }
-        if (r.newWord.isNotBlank()) Bus.post(Kind.INFO, "📘 New word: ${r.newWord}")
+        if (r.newWord.isNotBlank()) {
+            val parts = r.newWord.split("|").map { it.trim() }
+            Bus.post(Kind.WORD, parts[0], parts.drop(1).filter { it.isNotBlank() }.joinToString(" — "))
+            prefs.addWord(r.newWord)
+        }
 
         // Commands
         when (r.command) {
-            "pause" -> { paused = true; Bus.status("Paused — say \"continue\"") }
-            "continue" -> { paused = false; Bus.status("Listening…") }
+            "pause" -> paused = true
+            "continue" -> paused = false
             "slower" -> { prefs.speechRate = prefs.speechRate - 0.15f; speaker.setRate(prefs.speechRate) }
             "faster" -> { prefs.speechRate = prefs.speechRate + 0.15f; speaker.setRate(prefs.speechRate) }
             "repeat" -> speaker.repeatLast()
@@ -120,6 +139,7 @@ object Engine {
         if (r.language == "english" && hasCorrection) prefs.recordMistake(r.mistakeType, r.mistakeNote)
         val words = r.transcript.trim().split(Regex("\\s+")).count { it.isNotBlank() }
         prefs.addTurn(r.language, words, seconds, hasCorrection, r.newWord.isNotBlank())
+        Bus.statsChanged()
 
         addHistory("User: ${r.transcript}" +
             (if (hasCorrection) "  [correct form: ${r.corrected}]" else "") +

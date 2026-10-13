@@ -109,7 +109,7 @@ class CompanionService : Service() {
         listener?.stop()
         listener = null
         try { wakeLock?.release() } catch (_: Exception) { }
-        if (Bus.running) Bus.running(false)
+        if (Bus.isRunning) Bus.running(false)
         super.onDestroy()
     }
 
