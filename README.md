@@ -28,5 +28,8 @@ Audio is held in memory only, sent to Gemini, then discarded. Nothing is recorde
 - [x] Phase 1–5: interface, voice in, spoken replies, Bangla→English, correction
 - [x] Basic background mode (works minimised / screen off) + mistake memory + progress
 - [ ] Phase 6: use the earbud microphone (Bluetooth SCO)
+- [x] New design: Home dashboard, Talk (voice orb), Progress, Vocabulary, Settings
+- [x] Tap-to-send mic button, adaptive noise handling, reply timer
 - [ ] Phase 8: smarter interruption timing
+- [ ] Lock-screen player controls, battery saver
 - [ ] Phase 10: full progress dashboard
