@@ -20,7 +20,18 @@ object Engine {
     private val client = GeminiClient()
     private val worker = Executors.newSingleThreadExecutor()
     private val history = ArrayList<String>()   // short text log sent to the AI for context
-    @Volatile var paused = false
+    @Volatile var paused = false          // paused by voice ("pause") — still listens for "continue"
+    @Volatile private var practiceEndsAt = 0L
+
+    /** Paused by button / earbud / lock screen: microphone ignored completely. */
+    @Volatile var micPaused = false
+        set(v) {
+            field = v
+            Bus.paused(v)
+            Bus.status(idleStatus())
+            onPauseChanged?.invoke()
+        }
+    var onPauseChanged: (() -> Unit)? = null
     private val busyCount = java.util.concurrent.atomic.AtomicInteger(0)
     var onStopRequested: (() -> Unit)? = null
 
@@ -36,8 +47,35 @@ object Engine {
         if (prefs.saveHistory) loadHistory()
     }
 
-    fun submitAudio(wav: ByteArray, seconds: Float) {
-        submit(seconds) { key, model, prompt -> client.analyzeAudio(key, model, prompt, wav) }
+    fun submitAudio(pcm: ByteArray, seconds: Float) {
+        // compress on the worker thread (AAC is ~10x smaller than WAV -> faster on slow internet)
+        submit(seconds) { key, model, prompt -> client.analyzeAudio(key, model, prompt, AudioCodec.encode(pcm)) }
+    }
+
+    /** Daily 5-minute guided practice: the AI starts a topic and keeps the conversation going. */
+    fun startPractice() {
+        practiceEndsAt = System.currentTimeMillis() + 5 * 60_000L
+        Bus.post(Kind.INFO, "🎯 5-minute practice started. Answer out loud!")
+        submit(0f, typed = true, system = true) { key, model, prompt ->
+            client.instruct(key, model, prompt,
+                "Start a 5-minute speaking practice now. Greet the user in one short sentence, pick an " +
+                "everyday topic (daily routine, food, work, study, family, weekend plans, hobbies, travel) " +
+                "that suits his weak areas, and ask the first simple open question. speak=true.")
+        }
+    }
+
+    private fun practiceRule(): String {
+        if (practiceEndsAt == 0L) return ""
+        val leftMs = practiceEndsAt - System.currentTimeMillis()
+        return if (leftMs > 0) {
+            "PRACTICE SESSION ACTIVE (about ${(leftMs / 60_000L) + 1} min left) — this overrides the MODE rules: act like a friendly speaking coach. " +
+                "Always reply (speak=true) and ask the next short question to keep him talking. " +
+                "Gently correct important mistakes by recasting. Steer towards his weak areas."
+        } else {
+            practiceEndsAt = 0L
+            "PRACTICE TIME IS UP: after responding briefly, wrap up the practice with speak=true: " +
+                "one thing he did well and one thing to practise next time, in 2 short sentences."
+        }
     }
 
     fun submitText(text: String) {
@@ -45,12 +83,17 @@ object Engine {
         submit(0f, typed = true) { key, model, prompt -> client.analyzeText(key, model, prompt, text) }
     }
 
-    private fun idleStatus() =
-        if (Bus.isRunning) (if (paused) "Paused — say \"continue\"" else "Listening…") else "Ready"
+    private fun idleStatus() = when {
+        !Bus.isRunning -> "Ready"
+        micPaused -> "Paused — tap ▶ to resume"
+        paused -> "Paused — say \"continue\""
+        else -> "Listening…"
+    }
 
     private fun submit(
         seconds: Float,
         typed: Boolean = false,
+        system: Boolean = false,
         call: (String, String, String) -> AiResult
     ) {
         val key = prefs.apiKey
@@ -65,9 +108,9 @@ object Engine {
             val t0 = System.currentTimeMillis()
             if (typed) Bus.status("Thinking…")
             try {
-                val prompt = Prompt.build(prefs.mode, prefs.professional, prefs.memorySummary(), historyText(), paused)
+                val prompt = Prompt.build(prefs.mode, prefs.professional, prefs.memorySummary(), historyText(), paused, practiceRule())
                 val r = call(key, prefs.model, prompt)
-                handle(r, seconds, typed, (System.currentTimeMillis() - t0) / 1000f)
+                handle(r, seconds, typed, system, (System.currentTimeMillis() - t0) / 1000f)
             } catch (e: ApiException) {
                 val msg = when (e.code) {
                     429 -> "Free limit reached for now. Wait a minute (or try again tomorrow if it keeps happening)."
@@ -91,7 +134,15 @@ object Engine {
         }
     }
 
-    private fun handle(r: AiResult, seconds: Float, typed: Boolean, took: Float) {
+    private fun handle(r: AiResult, seconds: Float, typed: Boolean, system: Boolean, took: Float) {
+        if (system) {
+            if (r.reply.isNotBlank()) {
+                Bus.post(Kind.AI, r.reply)
+                speaker.speak(r.reply)
+                addHistory("You (starting practice): ${r.reply}")
+            }
+            return
+        }
         if (r.language == "noise") return
         if (r.language == "unclear" || (r.transcript.isBlank() && !typed)) {
             if (seconds >= 1.2f) Bus.post(Kind.INFO, "🤔 Couldn't hear that clearly — try again a bit closer to the mic.")

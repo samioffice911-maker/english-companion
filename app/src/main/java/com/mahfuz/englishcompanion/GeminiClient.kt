@@ -25,14 +25,22 @@ class ApiException(val code: Int, message: String) : IOException(message)
 class GeminiClient {
 
     fun analyzeAudio(
-        apiKey: String, model: String, systemPrompt: String, wav: ByteArray
+        apiKey: String, model: String, systemPrompt: String, audio: EncodedAudio
     ): AiResult {
-        val b64 = Base64.encodeToString(wav, Base64.NO_WRAP)
+        val b64 = Base64.encodeToString(audio.bytes, Base64.NO_WRAP)
         val parts = JSONArray()
             .put(JSONObject().put("inlineData",
-                JSONObject().put("mimeType", "audio/wav").put("data", b64)))
+                JSONObject().put("mimeType", audio.mime).put("data", b64)))
             .put(JSONObject().put("text",
                 "This audio is what the user just said. Respond with the JSON object only."))
+        return call(apiKey, model, systemPrompt, parts)
+    }
+
+    /** A message from the app itself (not the user), e.g. "start a practice session". */
+    fun instruct(apiKey: String, model: String, systemPrompt: String, instruction: String): AiResult {
+        val parts = JSONArray().put(JSONObject().put("text",
+            "[APP INSTRUCTION — the user did not say this. Set transcript to \"\" and language to \"english\".] " +
+                instruction + "\nRespond with the JSON object only."))
         return call(apiKey, model, systemPrompt, parts)
     }
 

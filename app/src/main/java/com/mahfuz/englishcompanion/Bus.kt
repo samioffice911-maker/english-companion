@@ -40,6 +40,12 @@ object Bus {
     /** true while the user is speaking (between speech start and send) */
     var capturing by mutableStateOf(false)
         private set
+    /** paused with the button / earbud / lock screen */
+    var paused by mutableStateOf(false)
+        private set
+    /** the background service listens to this to update the lock-screen player */
+    var onStatusChanged: ((String) -> Unit)? = null
+
     /** bumps whenever stats change, so screens re-read them */
     var statsVersion by mutableStateOf(0)
         private set
@@ -55,11 +61,15 @@ object Bus {
         }
     }
 
-    fun status(s: String) = main.post { status = s }
+    fun status(s: String) = main.post {
+        if (status != s) { status = s; onStatusChanged?.invoke(s) }
+    }
+
+    fun paused(p: Boolean) = main.post { paused = p }
 
     fun running(r: Boolean) {
         isRunning = r
-        main.post { running = r; if (!r) { level = 0f; capturing = false } }
+        main.post { running = r; if (!r) { level = 0f; capturing = false; paused = false } }
     }
 
     fun level(v: Float) = main.post { level = v }

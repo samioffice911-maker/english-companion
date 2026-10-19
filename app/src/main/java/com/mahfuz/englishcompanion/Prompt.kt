@@ -3,7 +3,7 @@ package com.mahfuz.englishcompanion
 /** Builds the instructions that tell the AI how to behave. */
 object Prompt {
 
-    fun build(mode: String, professional: Boolean, memory: String, history: String, paused: Boolean): String {
+    fun build(mode: String, professional: Boolean, memory: String, history: String, paused: Boolean, practice: String = ""): String {
         val modeRules = when (mode) {
             Modes.TEACHER -> """
 MODE: TEACHER.
@@ -67,6 +67,8 @@ SPOKEN STYLE: Your reply is read aloud by text-to-speech. Keep it short (usually
 Introduce a better word only occasionally (at most about once every 5 turns) and only when it fits naturally; put it in new_word.
 
 $pausedRule
+
+$practice
 
 ${if (memory.isNotBlank()) "PERSONAL MEMORY (practice these weak areas naturally, correct them more often):\n$memory" else ""}
 

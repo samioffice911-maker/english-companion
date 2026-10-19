@@ -68,14 +68,27 @@ fun TalkScreen(onStart: () -> Unit, onStop: () -> Unit) {
 
     Column(Modifier.fillMaxSize().imePadding()) {
         // Top bar: mode chooser
-        Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().padding(top = 10.dp)) {
             Row(
-                Modifier.clip(RoundedCornerShape(50)).clickable { menu = true }.padding(horizontal = 14.dp, vertical = 6.dp),
+                Modifier.align(Alignment.CenterStart).padding(start = 6.dp)
+                    .clip(RoundedCornerShape(50)).clickable { menu = true }.padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(Modes.title(mode), color = C.Text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 if (prefs.professional) Text("  💼", fontSize = 14.sp)
                 Text("  ▾", color = C.Muted, fontSize = 15.sp)
+            }
+            if (running) {
+                Row(
+                    Modifier.align(Alignment.CenterEnd).padding(end = 14.dp)
+                        .clip(RoundedCornerShape(50)).background(C.Red.copy(alpha = 0.18f))
+                        .clickable { onStop() }.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Ico(R.drawable.ic_stop, C.Red, 14.dp)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Stop", color = C.Red, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 Modes.ALL.forEachIndexed { i, m ->
@@ -101,6 +114,7 @@ fun TalkScreen(onStart: () -> Unit, onStop: () -> Unit) {
             Box(Modifier.size(8.dp).clip(CircleShape).background(
                 when {
                     !running -> C.Muted
+                    Bus.paused -> C.Orange
                     Bus.capturing -> C.Orange
                     else -> C.Green
                 }
@@ -116,7 +130,7 @@ fun TalkScreen(onStart: () -> Unit, onStop: () -> Unit) {
             Modifier.fillMaxWidth().animateContentSize().padding(vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            VoiceOrb(orbSize, running, Bus.level) { if (running) tapMic() else onStart() }
+            VoiceOrb(orbSize, running && !Bus.paused, Bus.level) { if (running) tapMic() else onStart() }
             if (empty) {
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -178,20 +192,25 @@ fun TalkScreen(onStart: () -> Unit, onStop: () -> Unit) {
                 Text(
                     when {
                         !running -> "Tap to start"
+                        Bus.paused -> "Paused"
                         Bus.capturing -> "Tap when done"
                         else -> "Tap to speak"
                     },
                     color = C.Muted, fontSize = 12.sp
                 )
             }
-            RoundButton(R.drawable.ic_stop, if (running) C.Red.copy(alpha = 0.85f) else C.Card, 48) {
-                if (running) onStop()
+            RoundButton(
+                if (Bus.paused) R.drawable.ic_play else R.drawable.ic_pause,
+                if (Bus.paused) C.Orange else C.Card, 48
+            ) {
+                if (running) Engine.micPaused = !Engine.micPaused
             }
         }
     }
 }
 
 private fun tapMic() {
+    if (Bus.paused) { Engine.micPaused = false; return }
     if (Bus.capturing) MicControl.forceEnd = true else MicControl.forceStart = true
 }
 

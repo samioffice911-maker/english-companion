@@ -66,6 +66,10 @@ class MainActivity : ComponentActivity() {
                         when (screen) {
                             Screen.HOME -> HomeScreen(
                                 onStart = { mode -> Engine.prefs.mode = mode; screen = Screen.TALK; startCompanion() },
+                                onPractice = {
+                                    if (Engine.prefs.apiKey.isBlank()) startCompanion()
+                                    else { screen = Screen.TALK; startCompanion(); Engine.startPractice() }
+                                },
                                 onSettings = { screen = Screen.SETTINGS },
                                 onOpen = { screen = it }
                             )

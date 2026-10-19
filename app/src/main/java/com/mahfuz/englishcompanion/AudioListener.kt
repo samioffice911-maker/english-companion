@@ -28,7 +28,7 @@ class AudioListener(
     private val sensitivity: () -> Int,
     private val pauseMs: () -> Int,
     private val shouldIgnore: () -> Boolean,
-    private val onUtterance: (wav: ByteArray, seconds: Float) -> Unit
+    private val onUtterance: (pcm: ByteArray, seconds: Float) -> Unit
 ) {
     private val sampleRate = 16000
     private val frameSamples = 320            // 20 ms
@@ -159,7 +159,7 @@ class AudioListener(
                         Bus.capturing(false)
                         if (voicedMs >= 300 || (tapEnd && totalMs >= 600)) {
                             val pcm = trimTrailingSilence(speech.toByteArray(), if (tapEnd) 0 else silentMs)
-                            onUtterance(wav(pcm), pcm.size / (sampleRate * 2f))
+                            onUtterance(pcm, pcm.size / (sampleRate * 2f))
                         } else {
                             Bus.status("Listening…")
                         }
@@ -196,16 +196,5 @@ class AudioListener(
         val bb = ByteBuffer.allocate(n * 2).order(ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until n) bb.putShort(data[i])
         out.write(bb.array(), 0, n * 2)
-    }
-
-    private fun wav(pcm: ByteArray): ByteArray {
-        val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
-        header.put("RIFF".toByteArray()); header.putInt(36 + pcm.size)
-        header.put("WAVE".toByteArray()); header.put("fmt ".toByteArray())
-        header.putInt(16); header.putShort(1); header.putShort(1)
-        header.putInt(sampleRate); header.putInt(sampleRate * 2)
-        header.putShort(2); header.putShort(16)
-        header.put("data".toByteArray()); header.putInt(pcm.size)
-        return header.array() + pcm
     }
 }
