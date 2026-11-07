@@ -85,5 +85,16 @@ jobs:
           name: phone-test-results
           path: shots/
 
+      - name: Save screenshots to the 'phone-test-results' branch
+        if: always()
+        run: |
+          cd shots
+          git init -q -b phone-test-results
+          git config user.name "phone-test"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -q -m "Phone test results for ${{ github.sha }}"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" phone-test-results
+
       - name: Fail if the app crashed
         run: test ! -f shots/CRASHED
