@@ -84,6 +84,14 @@ class Prefs(context: Context) {
         get() = p.getBoolean("barge_in", true)
         set(v) = p.edit().putBoolean("barge_in", v).apply()
 
+    var soundCues: Boolean
+        get() = p.getBoolean("sound_cues", true)
+        set(v) = p.edit().putBoolean("sound_cues", v).apply()
+
+    var vibration: Boolean
+        get() = p.getBoolean("vibration", true)
+        set(v) = p.edit().putBoolean("vibration", v).apply()
+
     // ---------- Diagnostics ----------
     var debugLog: Boolean
         get() = p.getBoolean("debug_log", true)

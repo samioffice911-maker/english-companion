@@ -63,6 +63,7 @@ class CompanionService : Service() {
 
         route = AudioRoute(this) { restartMic() }.also { it.start() }
         Engine.speaker.setCallRoute(route?.earbudMic == true)
+        updateCueRoute()
         DebugLog.event("session_start", "mode" to Engine.prefs.mode, "professional" to Engine.prefs.professional,
             "earbud_mic" to route?.earbudMic, "headphones" to route?.headphonesOut(),
             "barge_in" to Engine.prefs.bargeIn, "network" to DebugLog.network(),
@@ -72,6 +73,7 @@ class CompanionService : Service() {
         Bus.running(true)
         Bus.status("Listening…")
         Bus.post(Kind.INFO, "Companion started. Talk naturally — English, Bangla, or both.")
+        Cues.play(Cues.Cue.STARTED)
         Engine.speaker.speak("Hey, I'm ready.")
         return START_STICKY
     }
@@ -85,14 +87,17 @@ class CompanionService : Service() {
             sensitivity = { Engine.prefs.sensitivity },
             pauseMs = { Engine.prefs.pauseMs },
             shouldIgnore = {
-                Engine.micPaused || (!bargeInAllowed() && (
+                Engine.micPaused || System.currentTimeMillis() < Cues.busyUntil || (!bargeInAllowed() && (
                     Engine.speaker.isSpeaking ||
                         System.currentTimeMillis() - Engine.speaker.lastSpokeAt < 400))
             },
             callSource = { route?.earbudMic == true },
             aiSpeaking = { Engine.speaker.isSpeaking },
-            onSpeechStart = { if (Engine.speaker.isSpeaking && bargeInAllowed()) Engine.speaker.interrupt() },
-            onUtterance = { pcm, secs -> Engine.submitAudio(pcm, secs) }
+            onSpeechStart = {
+                if (Engine.speaker.isSpeaking && bargeInAllowed()) Engine.speaker.interrupt()
+                Cues.play(Cues.Cue.HEARD)
+            },
+            onUtterance = { pcm, secs -> Cues.play(Cues.Cue.SENT); Engine.submitAudio(pcm, secs) }
         ).also { it.start() }
     }
 
@@ -102,12 +107,18 @@ class CompanionService : Service() {
         Thread {
             listener?.stop()
             Engine.speaker.setCallRoute(route?.earbudMic == true)
+            updateCueRoute()
             main.post {
                 if (listener == null) return@post
                 startMic()
                 Bus.post(Kind.INFO, if (route?.earbudMic == true) "🎧 Using your earbud microphone" else "📱 Using the phone microphone")
             }
         }.start()
+    }
+
+    private fun updateCueRoute() {
+        Cues.callRoute = route?.earbudMic == true
+        Cues.headphones = route?.headphonesOut() == true
     }
 
     // ---------- lock-screen player ----------
@@ -232,6 +243,7 @@ class CompanionService : Service() {
 
     // ---------- stopping ----------
     private fun stopEverything() {
+        if (listener != null) Cues.play(Cues.Cue.STOPPED)
         listener?.stop()
         listener = null
         cleanup()

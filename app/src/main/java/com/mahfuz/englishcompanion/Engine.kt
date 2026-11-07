@@ -28,6 +28,7 @@ object Engine {
         set(v) {
             field = v
             DebugLog.event(if (v) "mic_paused" else "mic_resumed")
+            if (Bus.isRunning) Cues.play(if (v) Cues.Cue.PAUSED else Cues.Cue.RESUMED)
             Bus.paused(v)
             Bus.status(idleStatus())
             onPauseChanged?.invoke()
@@ -45,6 +46,7 @@ object Engine {
         appContext = context.applicationContext
         prefs = Prefs(appContext)
         DebugLog.init(appContext)
+        Cues.init(appContext)
         speaker = Speaker(appContext)
         speaker.setRate(prefs.speechRate)
         if (prefs.saveHistory) loadHistory()
@@ -153,10 +155,11 @@ object Engine {
         )
         worker.execute {
             val t0 = System.currentTimeMillis()
+            var failed = true
             if (typed) Bus.status("Thinking…")
             try {
                 val prompt = Prompt.build(prefs.mode, prefs.professional, prefs.memorySummary(), historyText(), paused, practiceRule())
-                val r = call(key, prefs.model, prompt) ?: return@execute
+                val r = call(key, prefs.model, prompt) ?: run { failed = false; return@execute }
                 val took = (System.currentTimeMillis() - t0) / 1000f
                 val tm = client.timing
                 DebugLog.event("response", "took_ms" to (System.currentTimeMillis() - t0),
@@ -171,6 +174,7 @@ object Engine {
                     Bus.post(Kind.INFO, String.format(java.util.Locale.US,
                         "📶 Slow network — that reply took %.0fs. Tapping the mic when you finish helps.", took))
                 }
+                failed = false
                 handle(r, seconds, typed, system, took)
             } catch (e: ApiException) {
                 DebugLog.event("error", "type" to "api", "code" to e.code, "msg" to e.message,
@@ -195,6 +199,7 @@ object Engine {
                 DebugLog.event("error", "type" to e.javaClass.simpleName, "msg" to e.message)
                 Bus.post(Kind.ERROR, "Error: ${e.message}")
             } finally {
+                if (failed) Cues.play(Cues.Cue.ERROR)
                 busyCount.decrementAndGet()
                 Bus.status(idleStatus())
             }

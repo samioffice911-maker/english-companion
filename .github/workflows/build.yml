@@ -29,6 +29,12 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk EnglishCompanion.apk
 
+      - name: Keep APK for the phone test
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: EnglishCompanion.apk
+
       - name: Publish to Releases (download on your phone)
         uses: softprops/action-gh-release@v2
         with:
@@ -39,3 +45,45 @@ jobs:
             Built from commit ${{ github.sha }}.
           files: EnglishCompanion.apk
           make_latest: true
+
+  # Opens the app on a virtual Android phone, takes screenshots of every screen and checks for crashes.
+  phone-test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+
+      - name: Prepare
+        run: cp EnglishCompanion.apk app.apk
+
+      - name: Enable KVM (makes the virtual phone fast)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run on virtual phone
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/scripts/ui-test.sh
+
+      - name: Save screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phone-test-results
+          path: shots/
+
+      - name: Fail if the app crashed
+        run: test ! -f shots/CRASHED

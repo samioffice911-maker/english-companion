@@ -68,6 +68,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var useMem by remember { mutableStateOf(prefs.useMemory) }
     var earbudMic by remember { mutableStateOf(prefs.useEarbudMic) }
     var bargeIn by remember { mutableStateOf(prefs.bargeIn) }
+    var soundCues by remember { mutableStateOf(prefs.soundCues) }
+    var vibration by remember { mutableStateOf(prefs.vibration) }
     var debugLog by remember { mutableStateOf(prefs.debugLog) }
     var logText by remember { mutableStateOf(prefs.logTranscripts) }
     var saveClips by remember { mutableStateOf(prefs.saveClips) }
@@ -87,6 +89,8 @@ fun SettingsScreen(onBack: () -> Unit) {
         prefs.useMemory = useMem
         prefs.useEarbudMic = earbudMic
         prefs.bargeIn = bargeIn
+        prefs.soundCues = soundCues
+        prefs.vibration = vibration
         prefs.debugLog = debugLog
         prefs.logTranscripts = logText
         prefs.saveClips = saveClips
@@ -141,7 +145,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             Field(model, { model = it }, Prefs.DEFAULT_MODEL)
         }
 
-        SettingCard("🎧  Earbuds", "Changes apply next time you start the companion.") {
+        SettingCard("🎧  Earbuds & sounds", "Changes apply next time you start the companion.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Use earbud microphone", color = C.Text, fontSize = 14.sp)
@@ -155,6 +159,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Text("With earbuds: keeps listening while it talks; it stops when you speak.", color = C.Muted, fontSize = 12.sp)
                 }
                 Toggle(bargeIn) { bargeIn = it }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Sound cues", color = C.Text, fontSize = 14.sp)
+                    Text("Tick = heard you · two beeps = sent · low tone = paused · buzz = error", color = C.Muted, fontSize = 12.sp)
+                }
+                Toggle(soundCues) { soundCues = it; prefs.soundCues = it }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Vibration", color = C.Text, fontSize = 14.sp)
+                    Text("Small buzz when your sentence is sent, paused or on errors", color = C.Muted, fontSize = 12.sp)
+                }
+                Toggle(vibration) { vibration = it; prefs.vibration = it }
             }
         }
 

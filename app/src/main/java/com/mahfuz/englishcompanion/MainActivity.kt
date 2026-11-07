@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Engine.init(this)
         if (Engine.prefs.apiKey.isBlank()) screen = Screen.SETTINGS
+        handleTestIntent(intent)
 
         setContent {
             AppTheme {
@@ -111,6 +112,31 @@ class MainActivity : ComponentActivity() {
                     colors = colors
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleTestIntent(intent)
+    }
+
+    /**
+     * Used only by the automatic tests on GitHub (adb commands), never by normal use:
+     *   --es screen HOME|TALK|PROGRESS|WORDS|SETTINGS   open a screen
+     *   --ez demo true                                   fill in sample data for screenshots
+     *   --es test_action start|pause|resume|stop         control the companion
+     */
+    private fun handleTestIntent(i: Intent?) {
+        i ?: return
+        if (i.getBooleanExtra("demo", false)) TestData.load()
+        i.getStringExtra("screen")?.let { name ->
+            Screen.values().firstOrNull { it.name == name }?.let { screen = it }
+        }
+        when (i.getStringExtra("test_action")) {
+            "start" -> startForegroundService(Intent(this, CompanionService::class.java))
+            "pause" -> startService(Intent(this, CompanionService::class.java).setAction(CompanionService.ACTION_PAUSE))
+            "resume" -> startService(Intent(this, CompanionService::class.java).setAction(CompanionService.ACTION_RESUME))
+            "stop" -> stopCompanion()
         }
     }
 
