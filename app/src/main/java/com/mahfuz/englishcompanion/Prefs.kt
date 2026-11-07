@@ -74,6 +74,29 @@ class Prefs(context: Context) {
         get() = p.getInt("pause_ms2", 900)
         set(v) = p.edit().putInt("pause_ms2", v).apply()
 
+    /** Use the Bluetooth earbuds' microphone when connected (call-quality audio). */
+    var useEarbudMic: Boolean
+        get() = p.getBoolean("earbud_mic", true)
+        set(v) = p.edit().putBoolean("earbud_mic", v).apply()
+
+    /** With earbuds/headphones: keep listening while the AI talks, and stop it when the user speaks. */
+    var bargeIn: Boolean
+        get() = p.getBoolean("barge_in", true)
+        set(v) = p.edit().putBoolean("barge_in", v).apply()
+
+    // ---------- Diagnostics ----------
+    var debugLog: Boolean
+        get() = p.getBoolean("debug_log", true)
+        set(v) = p.edit().putBoolean("debug_log", v).apply()
+
+    var logTranscripts: Boolean
+        get() = p.getBoolean("log_transcripts", true)
+        set(v) = p.edit().putBoolean("log_transcripts", v).apply()
+
+    var saveClips: Boolean
+        get() = p.getBoolean("save_clips", false)
+        set(v) = p.edit().putBoolean("save_clips", v).apply()
+
     var saveHistory: Boolean
         get() = p.getBoolean("save_history", false)
         set(v) = p.edit().putBoolean("save_history", v).apply()

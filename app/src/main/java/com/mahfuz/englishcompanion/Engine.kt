@@ -27,6 +27,7 @@ object Engine {
     @Volatile var micPaused = false
         set(v) {
             field = v
+            DebugLog.event(if (v) "mic_paused" else "mic_resumed")
             Bus.paused(v)
             Bus.status(idleStatus())
             onPauseChanged?.invoke()
@@ -36,20 +37,62 @@ object Engine {
     var onStopRequested: (() -> Unit)? = null
 
     val isBusy: Boolean get() = busyCount.get() > 0
+    private fun isBusyMoreThanOne() = busyCount.get() > 1
 
     @Synchronized
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
         prefs = Prefs(appContext)
+        DebugLog.init(appContext)
         speaker = Speaker(appContext)
         speaker.setRate(prefs.speechRate)
         if (prefs.saveHistory) loadHistory()
     }
 
+    // Clips waiting to be sent. If the network is slow and several pile up, they are sent together
+    // in ONE request, so replies don't arrive late one by one.
+    private class Clip(val pcm: ByteArray, val seconds: Float, val at: Long)
+    private val pending = ArrayList<Clip>()
+    @Volatile private var slowWarned = false
+
     fun submitAudio(pcm: ByteArray, seconds: Float) {
-        // compress on the worker thread (AAC is ~10x smaller than WAV -> faster on slow internet)
-        submit(seconds) { key, model, prompt -> client.analyzeAudio(key, model, prompt, AudioCodec.encode(pcm)) }
+        synchronized(pending) { pending.add(Clip(pcm, seconds, System.currentTimeMillis())) }
+        DebugLog.event("clip_queued", "seconds" to seconds, "waiting" to pendingCount(), "busy" to isBusy)
+        submit(seconds, audio = true) { key, model, prompt ->
+            val clips = synchronized(pending) { val c = ArrayList(pending); pending.clear(); c }
+            if (clips.isEmpty()) return@submit null   // already sent together with an earlier clip
+            val merged = merge(clips)
+            // compress on the worker thread (AAC is ~10x smaller than WAV -> faster on slow internet)
+            val t0 = System.currentTimeMillis()
+            val audio = AudioCodec.encode(merged)
+            val clip = DebugLog.saveClip(audio)
+            DebugLog.event("request", "clips" to clips.size,
+                "audio_s" to merged.size / 32000f, "encode_ms" to System.currentTimeMillis() - t0,
+                "mime" to audio.mime, "audio_bytes" to audio.bytes.size,
+                "queue_wait_ms" to System.currentTimeMillis() - clips.first().at,
+                "network" to DebugLog.network(), "mode" to prefs.mode, "clip_file" to clip)
+            if (clips.size > 1) Bus.post(Kind.INFO, "📶 Slow network: sent ${clips.size} sentences together")
+            client.analyzeAudio(key, model, prompt, audio)
+        }
+    }
+
+    private fun pendingCount() = synchronized(pending) { pending.size }
+
+    /** Joins clips with a short pause between them (max ~20 s of audio). */
+    private fun merge(clips: List<Clip>): ByteArray {
+        if (clips.size == 1) return clips[0].pcm
+        val gap = ByteArray(16000 * 2 * 3 / 10)        // 0.3 s silence
+        val out = java.io.ByteArrayOutputStream()
+        // keep the newest clips if too long
+        var total = 0
+        val keep = ArrayList<Clip>()
+        for (c in clips.reversed()) {
+            if (total + c.pcm.size > 16000 * 2 * 20 && keep.isNotEmpty()) break
+            keep.add(0, c); total += c.pcm.size
+        }
+        keep.forEachIndexed { i, c -> if (i > 0) out.write(gap); out.write(c.pcm) }
+        return out.toByteArray()
     }
 
     /** Daily 5-minute guided practice: the AI starts a topic and keeps the conversation going. */
@@ -94,7 +137,8 @@ object Engine {
         seconds: Float,
         typed: Boolean = false,
         system: Boolean = false,
-        call: (String, String, String) -> AiResult
+        audio: Boolean = false,
+        call: (String, String, String) -> AiResult?
     ) {
         val key = prefs.apiKey
         if (key.isBlank()) {
@@ -103,15 +147,34 @@ object Engine {
             return
         }
         busyCount.incrementAndGet()
-        if (!typed) Bus.status(String.format(java.util.Locale.US, "Understanding %.1fs of speech…", seconds))
+        if (!typed) Bus.status(
+            if (isBusyMoreThanOne()) "Still answering the last one… (queued)"
+            else String.format(java.util.Locale.US, "Understanding %.1fs of speech…", seconds)
+        )
         worker.execute {
             val t0 = System.currentTimeMillis()
             if (typed) Bus.status("Thinking…")
             try {
                 val prompt = Prompt.build(prefs.mode, prefs.professional, prefs.memorySummary(), historyText(), paused, practiceRule())
-                val r = call(key, prefs.model, prompt)
-                handle(r, seconds, typed, system, (System.currentTimeMillis() - t0) / 1000f)
+                val r = call(key, prefs.model, prompt) ?: return@execute
+                val took = (System.currentTimeMillis() - t0) / 1000f
+                val tm = client.timing
+                DebugLog.event("response", "took_ms" to (System.currentTimeMillis() - t0),
+                    "upload_ms" to tm.uploadMs, "wait_ms" to tm.waitMs, "download_ms" to tm.downloadMs,
+                    "request_kb" to tm.requestBytes / 1024, "attempts" to tm.attempts,
+                    "mode" to prefs.mode, "language" to r.language, "speak" to r.speak,
+                    "transcript" to DebugLog.text(r.transcript), "reply" to DebugLog.text(r.reply),
+                    "corrected" to DebugLog.text(r.corrected), "mistake" to r.mistakeType,
+                    "command" to r.command, "reason" to r.reason)
+                if (audio && took > 6f && !slowWarned) {
+                    slowWarned = true
+                    Bus.post(Kind.INFO, String.format(java.util.Locale.US,
+                        "📶 Slow network — that reply took %.0fs. Tapping the mic when you finish helps.", took))
+                }
+                handle(r, seconds, typed, system, took)
             } catch (e: ApiException) {
+                DebugLog.event("error", "type" to "api", "code" to e.code, "msg" to e.message,
+                    "upload_ms" to client.timing.uploadMs, "wait_ms" to client.timing.waitMs)
                 val msg = when (e.code) {
                     429 -> "Free limit reached for now. Wait a minute (or try again tomorrow if it keeps happening)."
                     400 -> if (e.message?.contains("API key", true) == true)
@@ -122,10 +185,14 @@ object Engine {
                 }
                 Bus.post(Kind.ERROR, msg)
             } catch (e: java.net.UnknownHostException) {
+                DebugLog.event("error", "type" to "no_internet", "network" to DebugLog.network())
                 Bus.post(Kind.ERROR, "No internet connection.")
             } catch (e: java.net.SocketTimeoutException) {
+                DebugLog.event("error", "type" to "timeout", "network" to DebugLog.network(),
+                    "upload_ms" to client.timing.uploadMs, "request_kb" to client.timing.requestBytes / 1024)
                 Bus.post(Kind.ERROR, "The AI took too long to answer (slow internet?). Try again.")
             } catch (e: Exception) {
+                DebugLog.event("error", "type" to e.javaClass.simpleName, "msg" to e.message)
                 Bus.post(Kind.ERROR, "Error: ${e.message}")
             } finally {
                 busyCount.decrementAndGet()

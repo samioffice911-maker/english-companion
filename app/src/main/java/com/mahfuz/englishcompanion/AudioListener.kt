@@ -28,6 +28,12 @@ class AudioListener(
     private val sensitivity: () -> Int,
     private val pauseMs: () -> Int,
     private val shouldIgnore: () -> Boolean,
+    /** true when the earbud mic ("call" audio) is in use */
+    private val callSource: () -> Boolean,
+    /** true while the AI is speaking (and we are allowed to listen anyway) */
+    private val aiSpeaking: () -> Boolean,
+    /** called the moment the user starts talking (used to stop the AI mid-sentence) */
+    private val onSpeechStart: () -> Unit,
     private val onUtterance: (pcm: ByteArray, seconds: Float) -> Unit
 ) {
     private val sampleRate = 16000
@@ -56,9 +62,13 @@ class AudioListener(
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
+        val useCall = callSource()
+        // VOICE_COMMUNICATION follows the Bluetooth call link and turns on the phone's echo/noise filters
+        val source = if (useCall) MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                     else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val recorder = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION, sampleRate,
+                source, sampleRate,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
                 max(minBuf, frameSamples * 2 * 10)
             )
@@ -74,6 +84,16 @@ class AudioListener(
             return
         }
 
+        // Built-in noise filter, if the phone has one
+        var ns: android.media.audiofx.NoiseSuppressor? = null
+        try {
+            if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+                ns = android.media.audiofx.NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
+            }
+        } catch (_: Exception) { }
+        DebugLog.event("mic_open", "source" to (if (useCall) "earbud(call)" else "phone"),
+            "noise_filter" to (ns != null))
+
         val frame = ShortArray(frameSamples)
         val preRoll = ArrayDeque<ShortArray>()
         val speech = ByteArrayOutputStream()
@@ -86,6 +106,8 @@ class AudioListener(
         var voicedMs = 0
         var totalMs = 0
         var frameCount = 0
+        var peak = 0.0
+        var startedWhileAi = false
 
         recorder.startRecording()
         try {
@@ -119,8 +141,13 @@ class AudioListener(
                     val startThreshold = max(minLevel, noiseFloor * 3.0)
                     recentLoud = if (rms > startThreshold) min(recentLoud + 1, 5) else max(recentLoud - 1, 0)
 
+                    // every ~15 s write the background noise level to the log
+                    if (frameCount % 750 == 0) DebugLog.event("mic_stats", "noise_floor" to noiseFloor.toInt(), "min_level" to minLevel.toInt())
+
                     val tapped = MicControl.forceStart
-                    if (recentLoud >= 3 || tapped) {
+                    // While the AI talks, need a bit more evidence that it's really the user
+                    val needed = if (aiSpeaking()) 4 else 3
+                    if (recentLoud >= needed || tapped) {
                         MicControl.forceStart = false
                         MicControl.forceEnd = false
                         inSpeech = true
@@ -132,12 +159,19 @@ class AudioListener(
                         voicedMs = if (tapped) 0 else 60
                         totalMs = 0
                         speechLevel = max(rms, minLevel)
+                        peak = rms
+                        startedWhileAi = aiSpeaking()
+                        DebugLog.event("speech_start", "tapped" to tapped, "rms" to rms.toInt(),
+                            "noise_floor" to noiseFloor.toInt(), "threshold" to startThreshold.toInt(),
+                            "ai_speaking" to startedWhileAi)
+                        onSpeechStart()
                         Bus.capturing(true)
                         Bus.status("Hearing you… (tap mic when done)")
                     }
                 } else {
                     writeShorts(speech, frame, n)
                     totalMs += frameMs
+                    if (rms > peak) peak = rms
 
                     // End threshold follows both the noise and how loud the user is speaking
                     val endThreshold = maxOf(minLevel * 0.5, noiseFloor * 2.0, speechLevel * 0.15)
@@ -157,7 +191,12 @@ class AudioListener(
                         inSpeech = false
                         recentLoud = 0
                         Bus.capturing(false)
-                        if (voicedMs >= 300 || (tapEnd && totalMs >= 600)) {
+                        val reason = when { tapEnd -> "tap"; totalMs >= maxMs -> "max_length"; else -> "silence" }
+                        val keep = voicedMs >= 300 || (tapEnd && totalMs >= 600)
+                        DebugLog.event("speech_end", "reason" to reason, "total_ms" to totalMs, "voiced_ms" to voicedMs,
+                            "peak" to peak.toInt(), "speech_level" to speechLevel.toInt(),
+                            "noise_floor" to noiseFloor.toInt(), "kept" to keep, "started_while_ai" to startedWhileAi)
+                        if (keep) {
                             val pcm = trimTrailingSilence(speech.toByteArray(), if (tapEnd) 0 else silentMs)
                             onUtterance(pcm, pcm.size / (sampleRate * 2f))
                         } else {
@@ -171,6 +210,7 @@ class AudioListener(
             }
         } finally {
             try { recorder.stop() } catch (_: Exception) { }
+            try { ns?.release() } catch (_: Exception) { }
             recorder.release()
             Bus.level(0f)
             Bus.capturing(false)

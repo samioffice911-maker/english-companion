@@ -45,6 +45,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mahfuz.englishcompanion.Bus
+import com.mahfuz.englishcompanion.DebugLog
 import com.mahfuz.englishcompanion.Engine
 import com.mahfuz.englishcompanion.Prefs
 import com.mahfuz.englishcompanion.R
@@ -65,6 +66,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     var pause by remember { mutableIntStateOf(pauseOptions.indexOf(prefs.pauseMs).let { if (it < 0) 1 else it }) }
     var saveHist by remember { mutableStateOf(prefs.saveHistory) }
     var useMem by remember { mutableStateOf(prefs.useMemory) }
+    var earbudMic by remember { mutableStateOf(prefs.useEarbudMic) }
+    var bargeIn by remember { mutableStateOf(prefs.bargeIn) }
+    var debugLog by remember { mutableStateOf(prefs.debugLog) }
+    var logText by remember { mutableStateOf(prefs.logTranscripts) }
+    var saveClips by remember { mutableStateOf(prefs.saveClips) }
+    var logSize by remember { mutableStateOf(DebugLog.sizeText()) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     fun save() {
@@ -78,6 +85,11 @@ fun SettingsScreen(onBack: () -> Unit) {
         prefs.pauseMs = pauseOptions[pause]
         prefs.saveHistory = saveHist
         prefs.useMemory = useMem
+        prefs.useEarbudMic = earbudMic
+        prefs.bargeIn = bargeIn
+        prefs.debugLog = debugLog
+        prefs.logTranscripts = logText
+        prefs.saveClips = saveClips
         Bus.statsChanged()
     }
 
@@ -129,6 +141,73 @@ fun SettingsScreen(onBack: () -> Unit) {
             Field(model, { model = it }, Prefs.DEFAULT_MODEL)
         }
 
+        SettingCard("🎧  Earbuds", "Changes apply next time you start the companion.") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Use earbud microphone", color = C.Text, fontSize = 14.sp)
+                    Text("Hears you even with the phone in your pocket. Voice sounds a little like a phone call.", color = C.Muted, fontSize = 12.sp)
+                }
+                Toggle(earbudMic) { earbudMic = it }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Let me interrupt the AI", color = C.Text, fontSize = 14.sp)
+                    Text("With earbuds: keeps listening while it talks; it stops when you speak.", color = C.Muted, fontSize = 12.sp)
+                }
+                Toggle(bargeIn) { bargeIn = it }
+            }
+        }
+
+        SettingCard("🛠  Diagnostics (for fixing problems)", "Records timings, network, noise and errors on this phone. Export it and send it to get problems analysed. Size: $logSize") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Debug log", color = C.Text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Toggle(debugLog) { debugLog = it; prefs.debugLog = it }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Include what I said (transcripts)", color = C.Text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Toggle(logText) { logText = it; prefs.logTranscripts = it }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Save audio clips", color = C.Text, fontSize = 14.sp)
+                    Text("Keeps the last 30 clips sent, to check noise problems. Your voice is stored.", color = C.Muted, fontSize = 12.sp)
+                }
+                Toggle(saveClips) { saveClips = it; prefs.saveClips = it }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        try {
+                            val zip = DebugLog.buildZip()
+                            val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".files", zip)
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                                .setType("application/zip")
+                                .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            ctx.startActivity(android.content.Intent.createChooser(send, "Share debug log"))
+                        } catch (e: Exception) {
+                            Toast.makeText(ctx, "Couldn't export: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = C.CardHi)
+                ) { Text("Share log", color = C.Text) }
+                Button(
+                    onClick = {
+                        val msg = try { DebugLog.saveToDownloads(DebugLog.buildZip()) } catch (e: Exception) { "Couldn't export: ${e.message}" }
+                        Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = C.CardHi)
+                ) { Text("Save to Downloads", color = C.Text, fontSize = 13.sp) }
+            }
+            TextButton(onClick = { DebugLog.clear(); logSize = "0 KB"; Toast.makeText(ctx, "Log cleared", Toast.LENGTH_SHORT).show() }) {
+                Text("Clear log", color = C.Muted)
+            }
+        }
+
         SettingCard("🔒  Privacy", "Your voice is never saved. Audio is sent to Gemini, then thrown away.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Remember recent conversation", color = C.Text, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -165,6 +244,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 TextButton(onClick = {
                     prefs.clearAllData()
                     Engine.clearHistory()
+                    DebugLog.clear()
                     Bus.clearLog()
                     Bus.statsChanged()
                     confirmDelete = false

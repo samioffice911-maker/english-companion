@@ -29,6 +29,7 @@ class CompanionService : Service() {
     private var listener: AudioListener? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var session: MediaSession? = null
+    private var route: AudioRoute? = null
     private val main = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -60,22 +61,53 @@ class CompanionService : Service() {
         Engine.onPauseChanged = { main.post { refreshPlayer() } }
         Bus.onStatusChanged = { refreshPlayer() }
 
-        listener = AudioListener(
-            sensitivity = { Engine.prefs.sensitivity },
-            pauseMs = { Engine.prefs.pauseMs },
-            shouldIgnore = {
-                Engine.micPaused ||
-                    Engine.speaker.isSpeaking ||
-                    System.currentTimeMillis() - Engine.speaker.lastSpokeAt < 400
-            },
-            onUtterance = { pcm, secs -> Engine.submitAudio(pcm, secs) }
-        ).also { it.start() }
+        route = AudioRoute(this) { restartMic() }.also { it.start() }
+        Engine.speaker.setCallRoute(route?.earbudMic == true)
+        DebugLog.event("session_start", "mode" to Engine.prefs.mode, "professional" to Engine.prefs.professional,
+            "earbud_mic" to route?.earbudMic, "headphones" to route?.headphonesOut(),
+            "barge_in" to Engine.prefs.bargeIn, "network" to DebugLog.network(),
+            "sensitivity" to Engine.prefs.sensitivity, "pause_ms" to Engine.prefs.pauseMs)
+        startMic()
 
         Bus.running(true)
         Bus.status("Listening…")
         Bus.post(Kind.INFO, "Companion started. Talk naturally — English, Bangla, or both.")
         Engine.speaker.speak("Hey, I'm ready.")
         return START_STICKY
+    }
+
+    // ---------- microphone ----------
+    /** Can we keep listening while the AI talks? Only when its voice goes into earbuds/headphones. */
+    private fun bargeInAllowed() = Engine.prefs.bargeIn && route?.headphonesOut() == true
+
+    private fun startMic() {
+        listener = AudioListener(
+            sensitivity = { Engine.prefs.sensitivity },
+            pauseMs = { Engine.prefs.pauseMs },
+            shouldIgnore = {
+                Engine.micPaused || (!bargeInAllowed() && (
+                    Engine.speaker.isSpeaking ||
+                        System.currentTimeMillis() - Engine.speaker.lastSpokeAt < 400))
+            },
+            callSource = { route?.earbudMic == true },
+            aiSpeaking = { Engine.speaker.isSpeaking },
+            onSpeechStart = { if (Engine.speaker.isSpeaking && bargeInAllowed()) Engine.speaker.interrupt() },
+            onUtterance = { pcm, secs -> Engine.submitAudio(pcm, secs) }
+        ).also { it.start() }
+    }
+
+    /** Earbuds connected/disconnected: reopen the mic on the right device. */
+    private fun restartMic() {
+        if (listener == null) return
+        Thread {
+            listener?.stop()
+            Engine.speaker.setCallRoute(route?.earbudMic == true)
+            main.post {
+                if (listener == null) return@post
+                startMic()
+                Bus.post(Kind.INFO, if (route?.earbudMic == true) "🎧 Using your earbud microphone" else "📱 Using the phone microphone")
+            }
+        }.start()
     }
 
     // ---------- lock-screen player ----------
@@ -211,6 +243,10 @@ class CompanionService : Service() {
     }
 
     private fun cleanup() {
+        route?.stop()
+        route = null
+        Engine.speaker.setCallRoute(false)
+        DebugLog.event("session_end")
         Engine.onStopRequested = null
         Engine.onPauseChanged = null
         Bus.onStatusChanged = null
