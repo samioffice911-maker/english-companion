@@ -96,5 +96,7 @@ jobs:
           git commit -q -m "Phone test results for ${{ github.sha }}"
           git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" phone-test-results
 
-      - name: Fail if the app crashed
-        run: test ! -f shots/CRASHED
+      - name: Fail if the app crashed or a check failed
+        run: |
+          test ! -f shots/CRASHED
+          if [ -f shots/FAILED ]; then cat shots/FAILED; exit 1; fi

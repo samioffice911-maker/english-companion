@@ -79,6 +79,15 @@ object Engine {
         }
     }
 
+    /** Exit: stop speaking, drop waiting sentences, and close the app screen. */
+    fun exitApp() {
+        synchronized(pending) { pending.clear() }
+        practiceEndsAt = 0L
+        try { speaker.stop() } catch (_: Exception) { }
+        Cues.release()
+        Bus.requestExit()
+    }
+
     private fun pendingCount() = synchronized(pending) { pending.size }
 
     /** Joins clips with a short pause between them (max ~20 s of audio). */

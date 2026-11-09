@@ -45,7 +45,20 @@ adb shell input keyevent KEYCODE_HOME; sleep 2
 adb shell input keyevent KEYCODE_SLEEP; sleep 2
 adb shell input keyevent KEYCODE_WAKEUP; shot 16-lock-screen 3
 adb shell wm dismiss-keyguard || true
+adb shell dumpsys notification --noredact > $OUT/notif-running.txt
 open --es test_action stop; shot 17-stopped 3
+sleep 2
+adb shell dumpsys notification --noredact > $OUT/notif-after-stop.txt
+if grep -q "pkg=$PKG" $OUT/notif-after-stop.txt; then echo "BUG: notification still there after Stop"; echo "notification after stop" >> $OUT/FAILED; else echo "OK: Stop removed the notification"; fi
+
+# Exit test: start, then Exit -> notification gone, app closed, process gone
+open --es screen HOME --es test_action start; sleep 5
+open --es test_action exit; sleep 3
+shot 17b-after-exit 1
+adb shell dumpsys notification --noredact > $OUT/notif-after-exit.txt
+if grep -q "pkg=$PKG" $OUT/notif-after-exit.txt; then echo "BUG: notification still there after Exit"; echo "notification after exit" >> $OUT/FAILED; else echo "OK: Exit removed the notification"; fi
+if adb shell pidof $PKG > /dev/null; then echo "BUG: app process still running after Exit"; echo "process after exit" >> $OUT/FAILED; else echo "OK: app fully closed after Exit"; fi
+adb shell dumpsys media_session | grep -i englishcompanion > $OUT/media-after-exit.txt || true
 
 # Rotate test (layout robustness)
 open --es screen HOME
@@ -57,7 +70,7 @@ adb shell dumpsys activity services $PKG > $OUT/services.txt 2>&1
 adb logcat -d > $OUT/logcat.txt
 adb logcat -d -s AndroidRuntime:E > $OUT/crashes.txt
 
-if grep -q "FATAL EXCEPTION" $OUT/logcat.txt; then
+if grep -q "FATAL EXCEPTION" $OUT/logcat.txt && grep -A3 "FATAL EXCEPTION" $OUT/logcat.txt | grep -q "$PKG"; then
   echo "=== APP CRASHED ==="
   grep -A40 "FATAL EXCEPTION" $OUT/logcat.txt | head -80
   touch $OUT/CRASHED

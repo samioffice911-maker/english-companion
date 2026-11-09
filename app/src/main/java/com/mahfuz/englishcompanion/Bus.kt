@@ -76,6 +76,14 @@ object Bus {
 
     fun capturing(c: Boolean) = main.post { capturing = c }
 
+    /** Set when the user pressed Exit; the screen closes itself. */
+    var exitRequested by mutableStateOf(false)
+        private set
+
+    fun requestExit() = main.post { exitRequested = true }
+    /** Call on the main thread when the app opens. */
+    fun clearExit() { exitRequested = false }
+
     fun statsChanged() = main.post { statsVersion++ }
 
     fun clearLog() = main.post { log.clear() }

@@ -53,11 +53,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         Engine.init(this)
+        Bus.clearExit()
         if (Engine.prefs.apiKey.isBlank()) screen = Screen.SETTINGS
         handleTestIntent(intent)
 
         setContent {
             AppTheme {
+                // Exit pressed (here or in the notification): close the app completely
+                androidx.compose.runtime.LaunchedEffect(Bus.exitRequested) {
+                    if (Bus.exitRequested) closeApp()
+                }
                 BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
                 Scaffold(
                     containerColor = C.Bg,
@@ -72,6 +77,7 @@ class MainActivity : ComponentActivity() {
                                     else { screen = Screen.TALK; startCompanion(); Engine.startPractice() }
                                 },
                                 onSettings = { screen = Screen.SETTINGS },
+                                onExit = { exitApp() },
                                 onOpen = { screen = it }
                             )
                             Screen.TALK -> TalkScreen(
@@ -137,7 +143,24 @@ class MainActivity : ComponentActivity() {
             "pause" -> startService(Intent(this, CompanionService::class.java).setAction(CompanionService.ACTION_PAUSE))
             "resume" -> startService(Intent(this, CompanionService::class.java).setAction(CompanionService.ACTION_RESUME))
             "stop" -> stopCompanion()
+            "exit" -> exitApp()
         }
+    }
+
+    /** Exit button: stop the companion everywhere and close the app. */
+    private fun exitApp() {
+        if (Bus.isRunning) {
+            // the service stops, removes its notification, then asks the screen to close
+            startService(Intent(this, CompanionService::class.java).setAction(CompanionService.ACTION_EXIT))
+        } else {
+            Engine.exitApp()
+        }
+    }
+
+    private fun closeApp() {
+        finishAndRemoveTask()
+        // make sure nothing is left running in the background
+        android.os.Handler(mainLooper).postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 800)
     }
 
     private fun startCompanion() {

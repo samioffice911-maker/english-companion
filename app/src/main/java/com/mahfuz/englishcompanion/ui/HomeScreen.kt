@@ -52,6 +52,7 @@ fun HomeScreen(
     onStart: (String) -> Unit,
     onPractice: () -> Unit,
     onSettings: () -> Unit,
+    onExit: () -> Unit,
     onOpen: (Screen) -> Unit
 ) {
     val prefs = Engine.prefs
@@ -94,6 +95,17 @@ fun HomeScreen(
                     .clickable { onSettings() },
                 contentAlignment = Alignment.Center
             ) { Ico(R.drawable.ic_settings, C.Muted) }
+            Spacer(Modifier.width(8.dp))
+            Column(
+                Modifier.clip(RoundedCornerShape(14.dp)).clickable { onExit() }.padding(horizontal = 4.dp, vertical = 2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(C.Red.copy(alpha = 0.15f))
+                        .border(1.dp, C.Red.copy(alpha = 0.5f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) { Ico(R.drawable.ic_power, C.Red) }
+            }
         }
 
         // ---------- Hero: start talking ----------

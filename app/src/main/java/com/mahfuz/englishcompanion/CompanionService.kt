@@ -35,12 +35,19 @@ class CompanionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        // Restarted by Android after being killed (no intent): don't come back on our own.
+        if (intent == null) { stopEverything(); return START_NOT_STICKY }
+        when (intent.action) {
             ACTION_STOP -> { stopEverything(); return START_NOT_STICKY }
-            ACTION_PAUSE -> { if (listener != null) Engine.micPaused = true; return START_STICKY }
-            ACTION_RESUME -> { if (listener != null) Engine.micPaused = false; return START_STICKY }
+            ACTION_EXIT -> { stopEverything(exit = true); return START_NOT_STICKY }
+            ACTION_PAUSE, ACTION_RESUME -> {
+                // A button on an old notification after the companion already ended: just clean up
+                if (listener == null) { stopEverything(); return START_NOT_STICKY }
+                Engine.micPaused = intent.action == ACTION_PAUSE
+                return START_NOT_STICKY
+            }
         }
-        if (listener != null) return START_STICKY
+        if (listener != null) return START_NOT_STICKY
 
         Engine.init(this)
         Engine.paused = false
@@ -75,7 +82,7 @@ class CompanionService : Service() {
         Bus.post(Kind.INFO, "Companion started. Talk naturally — English, Bangla, or both.")
         Cues.play(Cues.Cue.STARTED)
         Engine.speaker.speak("Hey, I'm ready.")
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     // ---------- microphone ----------
@@ -127,7 +134,7 @@ class CompanionService : Service() {
             setCallback(object : MediaSession.Callback() {
                 override fun onPlay() { Engine.micPaused = false }
                 override fun onPause() { Engine.micPaused = true }
-                override fun onStop() { stopEverything() }
+                override fun onStop() { stopEverything(exit = true) }
             })
             setSessionActivity(openAppIntent())
             isActive = true
@@ -209,8 +216,8 @@ class CompanionService : Service() {
         else
             Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_pause), "Pause",
                 serviceIntent(ACTION_PAUSE, 3)).build()
-        val stop = Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_stop), "Stop",
-            serviceIntent(ACTION_STOP, 1)).build()
+        val stop = Notification.Action.Builder(Icon.createWithResource(this, R.drawable.ic_power), "Exit",
+            serviceIntent(ACTION_EXIT, 1)).build()
 
         val style = Notification.MediaStyle().setShowActionsInCompactView(0, 1)
         session?.let { style.setMediaSession(it.sessionToken) }
@@ -242,16 +249,24 @@ class CompanionService : Service() {
     }
 
     // ---------- stopping ----------
-    private fun stopEverything() {
-        if (listener != null) Cues.play(Cues.Cue.STOPPED)
+    /**
+     * Stops listening and removes the notification + lock-screen player.
+     * [exit] = the user pressed Exit: also close the app screen.
+     */
+    private fun stopEverything(exit: Boolean = false) {
+        val wasRunning = listener != null
+        if (wasRunning) Cues.play(Cues.Cue.STOPPED)
         listener?.stop()
         listener = null
-        cleanup()
         Bus.running(false)
+        cleanup()
         Bus.status("Ready")
-        Bus.post(Kind.INFO, "Companion stopped.")
+        if (wasRunning && !exit) Bus.post(Kind.INFO, "Companion stopped.")
+        DebugLog.event(if (exit) "exit" else "stop", "was_running" to wasRunning)
         stopForeground(STOP_FOREGROUND_REMOVE)
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID)
         stopSelf()
+        if (exit) Engine.exitApp()
     }
 
     private fun cleanup() {
@@ -263,7 +278,14 @@ class CompanionService : Service() {
         Engine.onPauseChanged = null
         Bus.onStatusChanged = null
         Engine.micPaused = false
-        session?.let { it.isActive = false; it.release() }
+        session?.let {
+            // tell the system the "player" has stopped so the lock-screen / quick-settings player disappears
+            try {
+                it.setPlaybackState(PlaybackState.Builder().setState(PlaybackState.STATE_STOPPED, 0, 0f).build())
+            } catch (_: Exception) { }
+            it.isActive = false
+            it.release()
+        }
         session = null
         try { wakeLock?.release() } catch (_: Exception) { }
         wakeLock = null
@@ -283,5 +305,6 @@ class CompanionService : Service() {
         const val ACTION_STOP = "stop"
         const val ACTION_PAUSE = "pause"
         const val ACTION_RESUME = "resume"
+        const val ACTION_EXIT = "exit"
     }
 }
